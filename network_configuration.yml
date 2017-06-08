@@ -12,9 +12,9 @@ switches:
     address: 0.0.0.0
     netmask: 255.255.255.0
     ports:
-     - ifname: eno4
+     - ifname: ens192
 namespaces:
-  - name: node1
+  - name: demo
     interfaces:
     - ifname: einf0         # vNIC in namespce 
       type: static
@@ -23,65 +23,6 @@ namespaces:
         ifname: br0
         type: static
         address: 192.168.88.91
-        netmask: 255.255.255.0
-    - ifname: einf1
-      type: static
-      address: 0.0.0.0
-      bridge:
-        ifname: br1
-        type: static
-        address: 169.254.0.1
-        netmask: 255.255.255.0
-      pair: no
-  - name: node2
-    interfaces:
-    - ifname: einf0
-      type: static
-      address: 0.0.0.0
-      netmask: 255.255.255.0
-      bridge:
-        ifname: br0
-        type: static
-        address: 192.168.88.92
-        netmask: 255.255.255.0
-    - ifname: einf1
-      type: static
-      address: 0.0.0.0
-      bridge:
-        ifname: br1
-        type: static
-        address: 169.254.0.1
-        netmask: 255.255.255.0
-      pair: no
-  - name: node3
-    interfaces:
-    - ifname: einf0
-      type: static
-      address: 0.0.0.0
-      bridge:
-        ifname: br0
-        type: static
-        address: 192.168.88.93
-        netmask: 255.255.255.0
-    - ifname: einf1
-      type: static
-      address: 0.0.0.0
-      bridge:
-        ifname: br1
-        type: static
-        address: 169.254.0.1
-        netmask: 255.255.255.0
-      pair: no
-  - name: node4
-    interfaces:
-    - ifname: einf0
-      type: static
-      address: 0.0.0.0
-      netmask: 255.255.255.0
-      bridge:
-        ifname: br0
-        type: static
-        address: 192.168.88.94
         netmask: 255.255.255.0
     - ifname: einf1
       type: static
