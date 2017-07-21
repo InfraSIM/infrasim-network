@@ -38,25 +38,35 @@ class Topology(object):
             ovs_info["ifname"] = ovs_name
             self.__openvswitch[ovs_name] = InfrasimvSwitch(ovs_info)
         # load namespaces
-        #for ns in self.__topo["namespace"]:
-        #    self.__namespace[ns] = InfrasimNamespace(self.__topo[ns])
+        for ns_name in self.__topo["namespace"]:
+            ns_info = self.__topo[ns_name]
+            ns_info["name"] = ns_name
+            self.__namespace[ns_name] = InfrasimNamespace(ns_info)
         # load connections
         #self.__connection = self.__topo["connection"]
 
     def create(self):
         self.__load()
-        for ovs_name in self.__openvswitch:
-            self.__openvswitch[ovs_name].add_vswitch()
-            self.__openvswitch[ovs_name].add_all_ports()
+
+        for _, ovs in self.__openvswitch.items():
+            ovs.add_vswitch()
+            ovs.add_all_ports()
             # FIXME: substitute for below code
             # self.__vswitch_ex.set_interface("phy-br-ex", "int-br-ex")
             # self.__vswitch_int.set_interface("int-br-ex", "phy-br-ex")
-            self.__openvswitch[ovs_name].add_interface_d()
+            ovs.add_interface_d()
+
+        for _, ns in self.__namespace.items():
+            ns.create_namespace()
 
     def delete(self):
         self.__load()
-        for ovs_name in self.__openvswitch:
-            self.__openvswitch[ovs_name].del_vswitch()
+
+        for _, ovs in self.__openvswitch.items():
+            ovs.del_vswitch()
+
+        for _, ns in self.__namespace.items():
+            ns.del_namespace()
 
     def set_config(self, config_path):
         with open(config_path, "r") as fp:
@@ -69,20 +79,20 @@ class Topology(object):
         return json.dumps(self.__topo, indent=4)
 
 class InfrasimNamespace(object):
-    def __init__(self, vswitch_instance, ns_info):
+    def __init__(self, ns_info):
         self.__ns_info = ns_info
         self.name = ns_info['name']
         self.ip = IPRoute()
         # self.ipdb = IPDB(nl=NetNS(self.name))
         self.main_ipdb = IPDB()
-        self.__vswitch = vswitch_instance
+        # self.__vswitch = vswitch_instance
 
     @staticmethod
     def get_namespaces_list():
         return netns.listnetns()
 
     def build_one_namespace(self):
-        self._create_namespace()
+        self.create_namespace()
 
         for intf in self.__ns_info["interfaces"]:
             # get name
@@ -99,7 +109,7 @@ class InfrasimNamespace(object):
                 self.ip.link("set", index=idx, state="up")
                 interface_index += 1
 
-    def _create_namespace(self):
+    def create_namespace(self):
         if self.name in self.get_namespaces_list():
             print "name space {} exists.".format(self.name)
             return
