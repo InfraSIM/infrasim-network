@@ -8,6 +8,10 @@ import netifaces
 import json
 
 
+ip_route = IPRoute()
+main_ipdb = IPDB()
+
+
 def start_process(args):
     try:
         p = subprocess.Popen(args,
@@ -25,7 +29,6 @@ class Topology(object):
         self.__topo = None
         self.__openvswitch = {}
         self.__namespace = {}
-        self.__interface = {}
         self.__connection = {}
 
         with open(config_path, "r") as fp:
@@ -37,13 +40,15 @@ class Topology(object):
             ovs_info = self.__topo[ovs_name]
             ovs_info["ifname"] = ovs_name
             self.__openvswitch[ovs_name] = InfrasimvSwitch(ovs_info)
+
         # load namespaces
         for ns_name in self.__topo["namespace"]:
             ns_info = self.__topo[ns_name]
             ns_info["name"] = ns_name
             self.__namespace[ns_name] = InfrasimNamespace(ns_info)
+
         # load connections
-        #self.__connection = self.__topo["connection"]
+        self.__connection = self.__topo["connection"]
 
     def create(self):
         self.__load()
@@ -58,6 +63,7 @@ class Topology(object):
 
         for _, ns in self.__namespace.items():
             ns.create_namespace()
+            ns.create_all_interfaces(ref=self.__connection)
 
     def delete(self):
         self.__load()
@@ -86,6 +92,8 @@ class InfrasimNamespace(object):
         # self.ipdb = IPDB(nl=NetNS(self.name))
         self.main_ipdb = IPDB()
         # self.__vswitch = vswitch_instance
+        self.__interfaces = {}
+        self.__bridges = {}
 
     @staticmethod
     def get_namespaces_list():
@@ -114,6 +122,14 @@ class InfrasimNamespace(object):
             print "name space {} exists.".format(self.name)
             return
         netns.create(self.name)
+
+    def create_all_interfaces(self, ref):
+        for intf in self.__ns_info["interfaces"]:
+            ifname = intf["ifname"]
+            self.__interfaces[ifname] = Interface(intf)
+            self.__interfaces[ifname].set_peer(ref.get(ifname, None))
+            self.__interfaces[ifname].set_namespace(self.name)
+            self.__interfaces[ifname].create_interface()
 
     def del_namespace(self):
         if self.name in netns.listnetns():
@@ -328,6 +344,28 @@ class InfrasimvSwitch(object):
 class Interface(object):
     def __init__(self, interface_info):
         self.__intf_info = interface_info
+        self.__peer = None
+        self.__namespace = None
+
+    def create_interface(self):
+        global ip_route
+        global main_ipdb
+
+        ifname = self.__intf_info["ifname"]
+        if len(ip_route.link_lookup(ifname=ifname)) > 0:
+            print "ip link {} exists so not create it.".format(ifname)
+            return
+
+        if self.__peer:
+            if len(ip_route.link_lookup(ifname=self.__peer)) > 0:
+                print "ip link {} exists so not create it.".format(ifname)
+                return
+
+        main_ipdb.create(ifname=ifname,
+                         kind="veth" if self.__peer else "dummy",
+                         peer=self.__peer).commit()
+        with main_ipdb.interfaces[ifname] as veth:
+            veth.net_ns_fd = self.__namespace
 
     def handle_dhcp_type(self):
         content = ""
@@ -374,3 +412,9 @@ class Interface(object):
             return self.handle_static_type()
         else:
             raise Exception("Unsupported method {}.".format(self.__intf_info["type"]))
+
+    def set_peer(self, peer):
+        self.__peer = peer
+
+    def set_namespace(self, ns):
+        self.__namespace = ns
