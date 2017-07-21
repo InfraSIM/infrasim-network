@@ -51,7 +51,7 @@ class Topology(object):
             # FIXME: substitute for below code
             # self.__vswitch_ex.set_interface("phy-br-ex", "int-br-ex")
             # self.__vswitch_int.set_interface("int-br-ex", "phy-br-ex")
-
+            self.__openvswitch[ovs_name].add_interface_d()
 
     def delete(self):
         self.__load()
@@ -289,6 +289,30 @@ class InfrasimvSwitch(object):
         ret, output, outerr = start_process(["ovs-vsctl", "set", "interface", ifname, "type=patch", "options:peer={}".format(peername)])
         if ret != 0:
             raise Exception("fail to set interface {} for vswitch {}.".format(ifname, self.name))
+
+    def add_interface_d(self):
+        content = ""
+        if self.__vswitch_info["type"] == "static":
+            content += "auto {}\n".format(self.name)
+            content += "iface {} inet static\n".format(self.name)
+            for key, val in self.__vswitch_info.items():
+                if key == "ifname" or key == "type" or key == "ports":
+                    continue
+                elif val:
+                    content += "\t{} {}\n".format(key, val)
+        elif self.__vswitch_info["type"] == "dhcp":
+            content += "auto {}\n".format(self.name)
+            content += "iface {} inet dhcp\n".format(self.name)
+        else:
+            raise Exception("Unsupported method {}.".format(self.__vswitch_info["type"]))
+
+        with open("/etc/network/interfaces.d/{}".format(self.name), "w") as f:
+            f.write(content)
+
+        start_process(["ifdown", self.name])
+        returncode, out, err = start_process(["ifup", self.name])
+        if returncode != 0:
+            raise Exception("Failed to if up {}\nError: ".format(self.name, err))
 
 
 class Interface(object):
