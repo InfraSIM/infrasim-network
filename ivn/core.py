@@ -1,11 +1,12 @@
 import subprocess
 import yaml
 import os
+import shutil
+import netifaces
+import json
 from pyroute2 import IPDB
 from pyroute2 import netns
 from pyroute2.iproute import IPRoute
-import netifaces
-import json
 
 
 ip_route = IPRoute()
@@ -64,6 +65,7 @@ class Topology(object):
         for _, ns in self.__namespace.items():
             ns.create_namespace()
             ns.create_all_interfaces(ref=self.__connection)
+            ns.create_interface_d()
 
     def delete(self):
         self.__load()
@@ -73,6 +75,7 @@ class Topology(object):
 
         for _, ns in self.__namespace.items():
             ns.del_namespace()
+            ns.del_interface_d()
 
     def set_config(self, config_path):
         with open(config_path, "r") as fp:
@@ -130,10 +133,53 @@ class InfrasimNamespace(object):
             self.__interfaces[ifname].set_peer(ref.get(ifname, None))
             self.__interfaces[ifname].set_namespace(self.name)
             self.__interfaces[ifname].create_interface()
+        for br in self.__ns_info["bridges"]:
+            brname = br["ifname"]
+            self.__bridges[brname] = Interface(br)
+            self.__bridges[brname].set_namespace(self.name)
+
+    def create_interface_d(self):
+        netns_path = "/etc/netns"
+        ns_network_dir = os.path.join(netns_path, self.name, "network")
+
+        if_down_dir = os.path.join(ns_network_dir, "if-down.d")
+        if not os.path.exists(if_down_dir):
+            os.makedirs(if_down_dir)
+
+        if_post_down_dir = os.path.join(ns_network_dir, "if-post-down.d")
+        if not os.path.exists(if_post_down_dir):
+            os.makedirs(if_post_down_dir)
+
+        if_pre_up_dir = os.path.join(ns_network_dir, "if-pre-up.d")
+        if not os.path.exists(if_pre_up_dir):
+            os.makedirs(if_pre_up_dir)
+
+        if_up_dir = os.path.join(ns_network_dir, "if-up.d")
+        if not os.path.exists(if_up_dir):
+            os.makedirs(if_up_dir)
+
+        content = ""
+        content += "auto lo\n"
+        content += "iface lo inet loopback\n"
+        content += "\n"
+
+        for _, iobj in self.__interfaces.items():
+            content += iobj.compose()
+
+        for _, bobj in self.__bridges.items():
+            content += bobj.compose()
+
+        with open(os.path.join(ns_network_dir, "interfaces"), "w") as f:
+            f.write(content)
 
     def del_namespace(self):
         if self.name in netns.listnetns():
             netns.remove(self.name)
+
+    def del_interface_d(self):
+        netns_path = "/etc/netns"
+        ns_dir = os.path.join(netns_path, self.name)
+        shutil.rmtree(ns_dir)
 
     def create_single_virtual_intf_in_ns(self, intf):
         ifname = intf['ifname']

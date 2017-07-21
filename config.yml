@@ -39,14 +39,14 @@ node1ns:
         netmask: 255.255.255.0
     bridges:
     -
-        name: br0
-        interface: ns1-einf0
+        ifname: br0
+        bridge_ports: ns1-einf0
         type: static
         address: 192.168.88.91
         netmask: 255.255.255.0
     -
-        name: br1
-        interface: ns1-eext0
+        ifname: br1
+        bridge_ports: ns1-eext0
         type: static
         address: 169.254.0.1
         netmask: 255.255.255.0
@@ -65,14 +65,14 @@ node2ns:
         netmask: 255.255.255.0
     bridges:
     -
-        name: br0
-        interface: ns2-einf0
+        ifname: br0
+        bridge_ports: ns2-einf0
         type: static
         address: 192.168.88.92
         netmask: 255.255.255.0
     -
-        name: br1
-        interface: ns2-eext0
+        ifname: br1
+        bridge_ports: ns2-eext0
         type: static
         address: 169.254.0.2
         netmask: 255.255.255.0
@@ -90,14 +90,14 @@ node3ns:
         netmask: 255.255.255.0
     bridges:
     -
-        name: br0
-        interface: ns3-einf0
+        ifname: br0
+        bridge_ports: ns3-einf0
         type: static
         address: 192.168.88.93
         netmask: 255.255.255.0
     -
-        name: br1
-        interface: ns3-eext0
+        ifname: br1
+        bridge_ports: ns3-eext0
         type: static
         address: 169.254.0.3
         netmask: 255.255.255.0
