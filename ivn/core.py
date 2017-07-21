@@ -55,6 +55,8 @@ class Topology(object):
         """
         Resolve topology to data structure
         """
+        self.__validate()
+
         # load openvswitch
         for ovs_name in self.__topo["ovs"]:
             ovs_info = self.__topo[ovs_name]
@@ -68,7 +70,80 @@ class Topology(object):
             self.__namespace[ns_name] = InfrasimNamespace(ns_info)
 
         # load connections
+        # this connection is a mapping from
+        # namespace interface to vswitch port
         self.__connection = self.__topo["connection"]
+
+    def __validate(self):
+        print "[Validate topology]"
+
+        # validate there are key definitions
+        assert "namespace" in self.__topo
+        assert "ovs" in self.__topo
+        assert "connection" in self.__topo
+
+        # validate all namespace in index has definition
+        for ns in self.__topo["namespace"]:
+            assert ns in self.__topo
+        print "All namespaces in index have definition."
+
+        # validate all openvswitch in index has definition
+        for ovs in self.__topo["ovs"]:
+            assert ovs in self.__topo
+        print "All openvswitch in index have definition."
+
+        # TODO: validate all namespace definition is correct
+
+        # TODO: validate all openvswitch port definition is correct
+
+        # validate namespace
+        app_intf = []
+        for ns in self.__topo["namespace"]:
+            ns_intf = []
+            ns_br = []
+            ns_info = self.__topo[ns]
+
+            # validate no conflict interface name in global appliance
+            for intf in ns_info["interfaces"]:
+                assert intf["ifname"] not in app_intf
+                assert intf["ifname"] not in ns_intf
+                app_intf.append(intf["ifname"])
+                ns_intf.append(intf["ifname"])
+
+            # validate no conflict bridge name in namespace
+            for br in ns_info["bridges"]:
+                assert br["ifname"] not in ns_intf
+                assert br["ifname"] not in ns_br
+                ns_br.append(br["ifname"])
+
+                # validate if bridge in namespace use any interface
+                # the interface is defined
+                if "bridge_ports" in br:
+                    assert br["bridge_ports"] in ns_intf
+
+            print "Namespace {} interfaces and bridges config is legal.".format(ns)
+
+        # validate no conflict port name
+        app_port = []
+        for ovs in self.__topo["ovs"]:
+            ovs_info = self.__topo[ovs]
+
+            for port in ovs_info["ports"]:
+                assert port not in app_port
+                app_port.append(port)
+
+            print "Openvswitch {} ports config is legal.".format(ovs)
+
+        # validate all namespace interfaces are defined in some namespace
+        # validate all vswitch ports are defined in some vswitch
+        for ns_intf, ovs_port in self.__topo["connection"].items():
+            assert ns_intf in app_intf
+            assert ovs_port in app_port
+            print "Connection from namespace interface {} "\
+                  "to openvswitch port {} is defined.".\
+                  format(ns_intf, ovs_port)
+
+        print "Topology pass validation."
 
     def create(self):
         """
@@ -77,6 +152,7 @@ class Topology(object):
         """
         self.__load()
 
+        print "[Define openvswitches]"
         for _, ovs in self.__openvswitch.items():
             ovs.add_vswitch()
             ovs.add_all_ports()
@@ -85,14 +161,23 @@ class Topology(object):
             # self.__vswitch_int.set_interface("int-br-ex", "phy-br-ex")
             ovs.add_interface_d()
 
+        print "[Define namespaces]"
         for _, ns in self.__namespace.items():
             ns.create_namespace()
             ns.create_all_interfaces(ref=self.__connection)
 
+        print "[Set openvswitch ports up]"
+        for _, ovs in self.__openvswitch.items():
+            idx = IP_ROUTE.link_lookup(ifname=ovs.name)[0]
+            IP_ROUTE.link("set", index=idx, state="up")
+            print "set openvswitch {} up.".format(ovs.name)
+
         for _, ovs_port in self.__connection.items():
             idx = IP_ROUTE.link_lookup(ifname=ovs_port)[0]
             IP_ROUTE.link("set", index=idx, state="up")
+            print "set port {} up.".format(ovs_port)
 
+        print "[Set namespace interfaces up]"
         for _, ns in self.__namespace.items():
             ns.create_interface_d()
             ns.link_up_all()
@@ -139,9 +224,10 @@ class InfrasimNamespace(object):
 
     def create_namespace(self):
         if self.name in self.get_namespaces_list():
-            print "name space {} exists.".format(self.name)
+            print "namespace {} exists.".format(self.name)
             return
         netns.create(self.name)
+        print "namespace {} is created.".format(self.name)
 
     def create_all_interfaces(self, ref):
         for intf in self.__ns_info["interfaces"]:
@@ -190,6 +276,9 @@ class InfrasimNamespace(object):
         with open(os.path.join(ns_network_dir, "interfaces"), "w") as f:
             f.write(content)
 
+        print "namespace {} interfaces are defined in {}.".\
+              format(self.name, ns_network_dir)
+
     def del_namespace(self):
         if self.name in netns.listnetns():
             netns.remove(self.name)
@@ -217,6 +306,8 @@ class InfrasimNamespace(object):
 
         for _, bobj in self.__bridges.items():
             bobj.up()
+
+        print "interfaces in namespace {} are restarted.".format(self.name)
 
 
 class InfrasimvSwitch(object):
@@ -270,6 +361,7 @@ class InfrasimvSwitch(object):
     def add_all_ports(self):
         for port in self.__vswitch_info["ports"]:
             self.add_port(port)
+            print "port {} is added to {}.".format(port, self.name)
 
     def del_port(self, ifname):
         ret, _, outerr = start_process(["ovs-vsctl", "del-port", self.name, ifname])
@@ -313,6 +405,8 @@ class InfrasimvSwitch(object):
         if returncode != 0:
             raise Exception("Failed to if up {}\nError: {}".format(self.name, err))
 
+        print "Openvswitch {} is defined in /etc/network/interfaces.d and restarted.".format(self.name)
+
 
 class Interface(object):
     """
@@ -344,7 +438,6 @@ class Interface(object):
                         format(ifname, self.__namespace)
                 return
 
-
         MAIN_IPDB.create(ifname=ifname,
                          kind="veth" if self.__peer else "dummy",
                          peer=self.__peer).commit()
@@ -357,6 +450,9 @@ class Interface(object):
                 else:
                     raise e
 
+        print "interface {} in namespace {} is created, peer: {}.".\
+              format(ifname, self.__namespace, self.__peer)
+
     def create_bridge(self):
         br_name = self.__intf_info["ifname"]
         intf = self.__intf_info.get("bridge_ports", "")
@@ -368,6 +464,12 @@ class Interface(object):
         if intf:
             exec_cmd_in_namespace(self.__namespace, ["brctl", "addif", "{}".format(br_name), intf])
             exec_cmd_in_namespace(self.__namespace, ["ifconfig", intf, "promisc"])
+
+        print "bridge {} in namespace {} is created".format(br_name, self.__namespace),
+        if intf:
+            print "on interface {}.".format(intf)
+        else:
+            print "."
 
     def down(self):
         exec_cmd_in_namespace(self.__namespace, ["ifdown", self.__intf_info["ifname"]])
