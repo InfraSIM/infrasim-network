@@ -77,6 +77,7 @@ class Topology(object):
 
         for _, ns in self.__namespace.items():
             ns.create_interface_d()
+            ns.link_up_all()
 
     def delete(self):
         self.__load()
@@ -227,16 +228,17 @@ class InfrasimNamespace(object):
         # setup lo
         # self.exec_cmd_in_namespace(["ifdown", "lo"])
         # self.exec_cmd_in_namespace(["ifup", "lo"])
-        self.exec_cmd_in_namespace(["ip", "link", "set", "dev", "lo", "up"])
+        exec_cmd_in_namespace(self.name, ["ip", "link", "set", "dev", "lo", "up"])
 
-        for intf_info in self.__ns_info["interfaces"]:
-            if "bridge" in intf_info:
-                self.exec_cmd_in_namespace(["ip", "link", "set", "dev", intf_info["ifname"], "up"])
-                self.exec_cmd_in_namespace(["ifdown", intf_info["bridge"]["ifname"]])
-                self.exec_cmd_in_namespace(["ifup", intf_info["bridge"]["ifname"]])
-            else:
-                self.exec_cmd_in_namespace(["ifdown", intf_info["ifname"]])
-                self.exec_cmd_in_namespace(["ifup", intf_info["ifname"]])
+        for _, bobj in self.__bridges.items():
+            bobj.down()
+
+        for _, iobj in self.__interfaces.items():
+            iobj.down()
+            iobj.up()
+
+        for _, bobj in self.__bridges.items():
+            bobj.up()
 
     def create_bridge(self, intf="einf0", br_name="br0"):
         self.exec_cmd_in_namespace(["brctl", "addbr", "{}".format(br_name)])
@@ -436,6 +438,12 @@ class Interface(object):
         if intf:
             exec_cmd_in_namespace(self.__namespace, ["brctl", "addif", "{}".format(br_name), intf])
             exec_cmd_in_namespace(self.__namespace, ["ifconfig", intf, "promisc"])
+
+    def down(self):
+        exec_cmd_in_namespace(self.__namespace, ["ifdown", self.__intf_info["ifname"]])
+
+    def up(self):
+        exec_cmd_in_namespace(self.__namespace, ["ifup", self.__intf_info["ifname"]])
 
     def handle_dhcp_type(self):
         content = ""
