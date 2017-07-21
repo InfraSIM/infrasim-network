@@ -25,6 +25,9 @@ def start_process(args):
         return (-1, None, None)
 
 
+def exec_cmd_in_namespace(ns, cmd):
+    start_process(["ip", "netns", "exec", ns] + cmd)
+
 class Topology(object):
     def __init__(self, config_path):
         self.__topo = None
@@ -137,6 +140,7 @@ class InfrasimNamespace(object):
             brname = br["ifname"]
             self.__bridges[brname] = Interface(br)
             self.__bridges[brname].set_namespace(self.name)
+            self.__bridges[brname].create_bridge()
 
     def create_interface_d(self):
         netns_path = "/etc/netns"
@@ -412,6 +416,18 @@ class Interface(object):
                          peer=self.__peer).commit()
         with main_ipdb.interfaces[ifname] as veth:
             veth.net_ns_fd = self.__namespace
+
+    def create_bridge(self):
+        br_name = self.__intf_info["ifname"]
+        intf = self.__intf_info.get("bridge_ports", "")
+
+        exec_cmd_in_namespace(self.__namespace, ["brctl", "addbr", "{}".format(br_name)])
+        exec_cmd_in_namespace(self.__namespace, ["brctl", "setfd", "{}".format(br_name), "0"])
+        exec_cmd_in_namespace(self.__namespace, ["brctl", "sethello", "{}".format(br_name), "1"])
+        exec_cmd_in_namespace(self.__namespace, ["brctl", "stp", "{}".format(br_name), "no"])
+        if intf:
+            exec_cmd_in_namespace(self.__namespace, ["brctl", "addif", "{}".format(br_name), intf])
+            exec_cmd_in_namespace(self.__namespace, ["ifconfig", intf, "promisc"])
 
     def handle_dhcp_type(self):
         content = ""
