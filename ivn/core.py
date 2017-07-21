@@ -55,6 +55,8 @@ class Topology(object):
         self.__connection = self.__topo["connection"]
 
     def create(self):
+        global ip_route
+
         self.__load()
 
         for _, ovs in self.__openvswitch.items():
@@ -68,6 +70,12 @@ class Topology(object):
         for _, ns in self.__namespace.items():
             ns.create_namespace()
             ns.create_all_interfaces(ref=self.__connection)
+
+        for ns_intf, ovs_port in self.__connection.items():
+            idx = ip_route.link_lookup(ifname=ovs_port)[0]
+            ip_route.link("set", index=idx, state="up")
+
+        for _, ns in self.__namespace.items():
             ns.create_interface_d()
 
     def delete(self):
