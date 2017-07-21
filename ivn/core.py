@@ -1,8 +1,10 @@
 import os
 import shutil
 import json
+import re
 import subprocess
 import yaml
+from pyroute2 import netlink
 from pyroute2 import IPDB
 from pyroute2 import netns
 from pyroute2.iproute import IPRoute
@@ -31,7 +33,7 @@ def exec_cmd_in_namespace(ns, cmd):
     """
     Shell command agent to execute command in namespace
     """
-    start_process(["ip", "netns", "exec", ns] + cmd)
+    return start_process(["ip", "netns", "exec", ns] + cmd)
 
 class Topology(object):
     """
@@ -195,7 +197,10 @@ class InfrasimNamespace(object):
     def del_interface_d(self):
         netns_path = "/etc/netns"
         ns_dir = os.path.join(netns_path, self.name)
-        shutil.rmtree(ns_dir)
+        try:
+            shutil.rmtree(ns_dir)
+        except OSError:
+            pass
 
     def link_up_all(self):
         # setup lo
@@ -329,12 +334,28 @@ class Interface(object):
             if len(IP_ROUTE.link_lookup(ifname=self.__peer)) > 0:
                 print "ip link {} exists so not create it.".format(ifname)
                 return
+        else:
+            ps_intf = r"^\d+: (?P<intf>[\w-]+): "
+            p_intf = re.compile(ps_intf, re.MULTILINE)
+            _, out, _ = exec_cmd_in_namespace(self.__namespace, ["ip", "link"])
+            m_intf = p_intf.findall(out)
+            if ifname in m_intf:
+                print "ip link {} exists in namespace {} so not create it.".\
+                        format(ifname, self.__namespace)
+                return
+
 
         MAIN_IPDB.create(ifname=ifname,
                          kind="veth" if self.__peer else "dummy",
                          peer=self.__peer).commit()
         with MAIN_IPDB.interfaces[ifname] as veth:
-            veth.net_ns_fd = self.__namespace
+            try:
+                veth.net_ns_fd = self.__namespace
+            except netlink.exceptions.NetlinkError, e:
+                if e.code == 17:  # "File exists"
+                    pass
+                else:
+                    raise e
 
     def create_bridge(self):
         br_name = self.__intf_info["ifname"]
