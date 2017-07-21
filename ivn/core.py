@@ -1,19 +1,21 @@
-import subprocess
-import yaml
 import os
 import shutil
-import netifaces
 import json
+import subprocess
+import yaml
 from pyroute2 import IPDB
 from pyroute2 import netns
 from pyroute2.iproute import IPRoute
 
 
-ip_route = IPRoute()
-main_ipdb = IPDB()
+IP_ROUTE = IPRoute()
+MAIN_IPDB = IPDB()
 
 
 def start_process(args):
+    """
+    Shell command agent
+    """
     try:
         p = subprocess.Popen(args,
                              stdin=subprocess.PIPE,
@@ -26,9 +28,18 @@ def start_process(args):
 
 
 def exec_cmd_in_namespace(ns, cmd):
+    """
+    Shell command agent to execute command in namespace
+    """
     start_process(["ip", "netns", "exec", ns] + cmd)
 
 class Topology(object):
+    """
+    InfraSIM virtual network abstraction, with definition on:
+    - namespace
+    - openvswitches
+    - connection from namespace interface to openvswitch port
+    """
     def __init__(self, config_path):
         self.__topo = None
         self.__openvswitch = {}
@@ -39,6 +50,9 @@ class Topology(object):
             self.__topo = yaml.load(fp)
 
     def __load(self):
+        """
+        Resolve topology to data structure
+        """
         # load openvswitch
         for ovs_name in self.__topo["ovs"]:
             ovs_info = self.__topo[ovs_name]
@@ -55,8 +69,10 @@ class Topology(object):
         self.__connection = self.__topo["connection"]
 
     def create(self):
-        global ip_route
-
+        """
+        Main function to build all infrasim virtual network referring to
+        resolved topology
+        """
         self.__load()
 
         for _, ovs in self.__openvswitch.items():
@@ -71,15 +87,19 @@ class Topology(object):
             ns.create_namespace()
             ns.create_all_interfaces(ref=self.__connection)
 
-        for ns_intf, ovs_port in self.__connection.items():
-            idx = ip_route.link_lookup(ifname=ovs_port)[0]
-            ip_route.link("set", index=idx, state="up")
+        for _, ovs_port in self.__connection.items():
+            idx = IP_ROUTE.link_lookup(ifname=ovs_port)[0]
+            IP_ROUTE.link("set", index=idx, state="up")
 
         for _, ns in self.__namespace.items():
             ns.create_interface_d()
             ns.link_up_all()
 
     def delete(self):
+        """
+        Main function to clear all infrasim virtual network referring to
+        resolved topology
+        """
         self.__load()
 
         for _, ovs in self.__openvswitch.items():
@@ -100,37 +120,20 @@ class Topology(object):
         return json.dumps(self.__topo, indent=4)
 
 class InfrasimNamespace(object):
+    """
+    Namespace abstraction
+    Mainly use ip command set for management
+    """
     def __init__(self, ns_info):
         self.__ns_info = ns_info
         self.name = ns_info['name']
         self.ip = IPRoute()
-        # self.ipdb = IPDB(nl=NetNS(self.name))
-        self.main_ipdb = IPDB()
-        # self.__vswitch = vswitch_instance
         self.__interfaces = {}
         self.__bridges = {}
 
     @staticmethod
     def get_namespaces_list():
         return netns.listnetns()
-
-    def build_one_namespace(self):
-        self.create_namespace()
-
-        for intf in self.__ns_info["interfaces"]:
-            # get name
-            ifname = intf["ifname"]
-            if intf.get("pair") is False:
-                self.create_single_virtual_intf_in_ns(intf)
-            else:
-                global interface_index
-                self.create_ip_link_in_ns(ifname, "veth{}".format(interface_index))
-                if 'bridge' in intf:
-                    self.create_bridge(intf=ifname, br_name=intf['bridge']['ifname'])
-                self.__vswitch.add_port("veth{}".format(interface_index))
-                idx = self.ip.link_lookup(ifname="veth{}".format(interface_index))[0]
-                self.ip.link("set", index=idx, state="up")
-                interface_index += 1
 
     def create_namespace(self):
         if self.name in self.get_namespaces_list():
@@ -194,36 +197,6 @@ class InfrasimNamespace(object):
         ns_dir = os.path.join(netns_path, self.name)
         shutil.rmtree(ns_dir)
 
-    def create_single_virtual_intf_in_ns(self, intf):
-        ifname = intf['ifname']
-        if len(self.ip.link_lookup(ifname=ifname)) > 0:
-            print "ip link {} exists so not create it.".format(ifname)
-            return
-
-        self.main_ipdb.create(ifname=ifname, kind="dummy").commit()
-        with self.main_ipdb.interfaces[ifname] as veth:
-            veth.net_ns_fd = self.name
-
-        if 'bridge' in intf:
-            self.create_bridge(intf=ifname, br_name=intf['bridge']['ifname'])
-
-    def create_ip_link_in_ns(self, ifname, peername):
-        if len(self.ip.link_lookup(ifname=ifname)) > 0:
-            print "ip link {} exists so not create it.".format(ifname)
-            return
-
-        if len(self.ip.link_lookup(ifname=peername)) > 0:
-            print "ip link {} exists so not create it.".format(peername)
-            return
-
-        # create link peer
-        self.main_ipdb.create(ifname=ifname, kind="veth", peer=peername).commit()
-        with self.main_ipdb.interfaces[ifname] as veth:
-            veth.net_ns_fd = self.name
-
-    def exec_cmd_in_namespace(self, cmd):
-        start_process(["ip", "netns", "exec", self.name] + cmd)
-
     def link_up_all(self):
         # setup lo
         # self.exec_cmd_in_namespace(["ifdown", "lo"])
@@ -240,52 +213,13 @@ class InfrasimNamespace(object):
         for _, bobj in self.__bridges.items():
             bobj.up()
 
-    def create_bridge(self, intf="einf0", br_name="br0"):
-        self.exec_cmd_in_namespace(["brctl", "addbr", "{}".format(br_name)])
-        self.exec_cmd_in_namespace(["brctl", "addif", "{}".format(br_name), intf])
-        self.exec_cmd_in_namespace(["brctl", "setfd", "{}".format(br_name), "0"])
-        self.exec_cmd_in_namespace(["brctl", "sethello", "{}".format(br_name), "1"])
-        self.exec_cmd_in_namespace(["brctl", "stp", "{}".format(br_name), "no"])
-        self.exec_cmd_in_namespace(["ifconfig", intf, "promisc"])
-
-    def build_ns_configuration(self):
-        netns_path = "/etc/netns"
-        ns_network_dir = os.path.join(netns_path, self.name, "network")
-
-        if_down_dir = os.path.join(ns_network_dir, "if-down.d")
-        if not os.path.exists(if_down_dir):
-            os.makedirs(if_down_dir)
-
-        if_post_down_dir = os.path.join(ns_network_dir, "if-post-down.d")
-        if not os.path.exists(if_post_down_dir):
-            os.makedirs(if_post_down_dir)
-
-        if_pre_up_dir = os.path.join(ns_network_dir, "if-pre-up.d")
-        if not os.path.exists(if_pre_up_dir):
-            os.makedirs(if_pre_up_dir)
-
-        if_up_dir = os.path.join(ns_network_dir, "if-up.d")
-        if not os.path.exists(if_up_dir):
-            os.makedirs(if_up_dir)
-
-        content = ""
-        content += "auto lo\n"
-        content += "iface lo inet loopback\n"
-        content += "\n"
-
-        intf_list = []
-        for intf_info in self.__ns_info["interfaces"]:
-            intf_obj = Interface(intf_info)
-            intf_list.append(intf_obj)
-
-        for iobj in intf_list:
-            content += iobj.compose()
-
-        with open(os.path.join(ns_network_dir, "interfaces"), "w") as f:
-            f.write(content)
-
 
 class InfrasimvSwitch(object):
+    """
+    Openvswitch abstraction
+    Mainly use ovs-vsctl command set for management
+    """
+
     def __init__(self, vswitch_info):
         self.__vswitch_info = vswitch_info
         self.name = vswitch_info["ifname"]
@@ -294,35 +228,6 @@ class InfrasimvSwitch(object):
     @staticmethod
     def get_vswitchs_list():
         return start_process(["ovs-vsctl", "show"])[1]
-
-    def build_one_vswitch(self):
-        # add port in configuration to vswitch
-        if "ports" in self.__vswitch_info:
-            for port in self.__vswitch_info["ports"]:
-                self.add_port(port["ifname"])
-
-        content = ""
-        if self.__vswitch_info["type"] == "static":
-            content += "auto {}\n".format(self.name)
-            content += "iface {} inet static\n".format(self.name)
-            for key, val in self.__vswitch_info.items():
-                if key == "ifname" or key == "type" or key == "ports":
-                    continue
-                elif val:
-                    content += "\t{} {}\n".format(key, val)
-        elif self.__vswitch_info["type"] == "dhcp":
-            content += "auto {}\n".format(self.name)
-            content += "iface {} inet dhcp\n".format(self.name)
-        else:
-            raise Exception("Unsupported method {}.".format(self.__vswitch_info["type"]))
-
-        with open("/etc/network/interfaces.d/{}".format(self.name), "w") as f:
-            f.write(content)
-
-        start_process(["ifdown", self.name])
-        returncode, out, err = start_process(["ifup", self.name])
-        if returncode != 0:
-            raise Exception("Failed to if up {}\nError: ".format(self.name, err))
 
     def check_vswitch_exists(self):
         ret = start_process(["ovs-vsctl", "br-exists", self.name])[0]
@@ -353,7 +258,7 @@ class InfrasimvSwitch(object):
         if not self.check_vswitch_exists():
             raise Exception("vswitch {} doesn't exist, please add it first.".format(self.name))
 
-        ret, output, outerr = start_process(["ovs-vsctl", "add-port", self.name, ifname])
+        ret, _, outerr = start_process(["ovs-vsctl", "add-port", self.name, ifname])
         if ret != 0:
             print outerr
 
@@ -362,7 +267,7 @@ class InfrasimvSwitch(object):
             self.add_port(port)
 
     def del_port(self, ifname):
-        ret, output, outerr = start_process(["ovs-vsctl", "del-port", self.name, ifname])
+        ret, _, outerr = start_process(["ovs-vsctl", "del-port", self.name, ifname])
         if ret != 0:
             print outerr
 
@@ -372,7 +277,10 @@ class InfrasimvSwitch(object):
 
     def set_interface(self, ifname, peername):
         self.add_port(ifname)
-        ret, output, outerr = start_process(["ovs-vsctl", "set", "interface", ifname, "type=patch", "options:peer={}".format(peername)])
+        ret, _, _ = start_process(["ovs-vsctl",
+                                   "set", "interface", ifname,
+                                   "type=patch",
+                                   "options:peer={}".format(peername)])
         if ret != 0:
             raise Exception("fail to set interface {} for vswitch {}.".format(ifname, self.name))
 
@@ -396,35 +304,36 @@ class InfrasimvSwitch(object):
             f.write(content)
 
         start_process(["ifdown", self.name])
-        returncode, out, err = start_process(["ifup", self.name])
+        returncode, _, err = start_process(["ifup", self.name])
         if returncode != 0:
-            raise Exception("Failed to if up {}\nError: ".format(self.name, err))
+            raise Exception("Failed to if up {}\nError: {}".format(self.name, err))
 
 
 class Interface(object):
+    """
+    Ethernet interface abstraction, including normal interface and bridge
+    Mainly use ip command set for management
+    """
     def __init__(self, interface_info):
         self.__intf_info = interface_info
         self.__peer = None
         self.__namespace = None
 
     def create_interface(self):
-        global ip_route
-        global main_ipdb
-
         ifname = self.__intf_info["ifname"]
-        if len(ip_route.link_lookup(ifname=ifname)) > 0:
+        if len(IP_ROUTE.link_lookup(ifname=ifname)) > 0:
             print "ip link {} exists so not create it.".format(ifname)
             return
 
         if self.__peer:
-            if len(ip_route.link_lookup(ifname=self.__peer)) > 0:
+            if len(IP_ROUTE.link_lookup(ifname=self.__peer)) > 0:
                 print "ip link {} exists so not create it.".format(ifname)
                 return
 
-        main_ipdb.create(ifname=ifname,
+        MAIN_IPDB.create(ifname=ifname,
                          kind="veth" if self.__peer else "dummy",
                          peer=self.__peer).commit()
-        with main_ipdb.interfaces[ifname] as veth:
+        with MAIN_IPDB.interfaces[ifname] as veth:
             veth.net_ns_fd = self.__namespace
 
     def create_bridge(self):
