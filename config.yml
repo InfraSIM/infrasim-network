@@ -1,0 +1,135 @@
+namespace:
+-
+    node1ns
+-
+    node2ns
+-
+    node3ns
+
+ovs:
+-
+    br-int
+-
+    br-ex
+
+connection:
+-
+    ns1-einf0: vint0
+-
+    ns1-eext0: vex0
+-
+    ns2-einf0: vint1
+-
+    ns2-eext0: vex1
+-
+    ns3-einf0: vint2
+-
+    ns3-eext0: vex2
+
+node1ns:
+    interface:
+    -
+        ifname: ns1-einf0
+        type: static
+        address: 0.0.0.0
+        netmask: 255.255.255.0
+    -
+        ifname: ns1-eext0
+        type: static
+        address: 0.0.0.0
+        netmask: 255.255.255.0
+    -
+        ifname: ns1-single
+        type: static
+        address: 172.31.128.1
+        netmask: 255.255.255.0
+    bridge:
+    -
+        name: br0
+        interface: ns1-einf0
+        type: static
+        address: 192.168.88.91
+        netmask: 255.255.255.0
+    -
+        name: br1
+        interface: ns1-eext0
+        type: static
+        address: 169.254.0.1
+        netmask: 255.255.255.0
+
+node2ns:
+    interface:
+    -
+        ifname: ns2-einf0
+        type: static
+        address: 0.0.0.0
+        netmask: 255.255.255.0
+    -
+        ifname: ns2-eext0
+        type: static
+        address: 0.0.0.0
+        netmask: 255.255.255.0
+    bridge:
+    -
+        name: br0
+        interface: ns2-einf0
+        type: static
+        address: 192.168.88.92
+        netmask: 255.255.255.0
+    -
+        name: br1
+        interface: ns2-eext0
+        type: static
+        address: 169.254.0.2
+        netmask: 255.255.255.0
+node3ns:
+    interface:
+    -
+        ifname: ns3-einf0
+        type: static
+        address: 0.0.0.0
+        netmask: 255.255.255.0
+    -
+        ifname: ns3-eext0
+        type: static
+        address: 0.0.0.0
+        netmask: 255.255.255.0
+    bridge:
+    -
+        name: br0
+        interface: ns3-einf0
+        type: static
+        address: 192.168.88.93
+        netmask: 255.255.255.0
+    -
+        name: br1
+        interface: ns3-eext0
+        type: static
+        address: 169.254.0.3
+        netmask: 255.255.255.0
+
+br-int:
+    ports:
+    -
+        vint0
+    -
+        vint1
+    -
+        vint2
+    type: static
+    address: 192.168.88.1
+    netmask: 255.255.255.0
+
+br-ex:
+    ports:
+    -
+        vex0
+    -
+        vex1
+    -
+        vex2
+    -
+        eth0
+    type: static
+    address: 0.0.0.0
+    netmask: 255.255.255.0
