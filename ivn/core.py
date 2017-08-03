@@ -218,6 +218,12 @@ class Topology(object):
     def get_topo(self):
         return self.__topo
 
+    def get_namespace(self):
+        return self.__namespace
+
+    def get_openvswitch(self):
+        return self.__openvswitch
+
     def __str__(self):
         return json.dumps(self.__topo, indent=4)
 
