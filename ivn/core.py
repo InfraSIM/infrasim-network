@@ -10,6 +10,7 @@ from pyroute2 import netns
 from pyroute2.iproute import IPRoute
 
 
+
 IP_ROUTE = IPRoute()
 MAIN_IPDB = IPDB()
 
@@ -182,12 +183,16 @@ class Topology(object):
             ns.create_interface_d()
             ns.link_up_all()
 
+        print "[Setup portforward]"
+        InfrasimPortforward.build(self.__topo.get("portforward"))
+
     def delete(self):
         """
         Main function to clear all infrasim virtual network referring to
         resolved topology
         """
         self.__load()
+        InfrasimPortforward.clear()
 
         for _, ovs in self.__openvswitch.items():
             ovs.del_vswitch()
@@ -226,7 +231,9 @@ class InfrasimNamespace(object):
         if self.name in self.get_namespaces_list():
             print "namespace {} exists.".format(self.name)
             return
-        netns.create(self.name)
+        # netns.create(self.name)
+        # "netns.create(self.name)" changes present namespace to self.name, which is unexpect.
+        subprocess.call(["ip","netns","add",self.name])
         print "namespace {} is created.".format(self.name)
 
     def create_all_interfaces(self, ref):
@@ -342,6 +349,7 @@ class InfrasimvSwitch(object):
         if not self.check_vswitch_exists():
             print "vswitch {} doesn't exist so not delete it".format(self.name)
         else:
+            self.del_all_ports()
             if start_process(["ovs-vsctl", "del-br", self.name])[0]:
                 raise Exception("fail to delete vswitch {}".format(self.name))
             try:
@@ -367,9 +375,14 @@ class InfrasimvSwitch(object):
         ret, _, outerr = start_process(["ovs-vsctl", "del-port", self.name, ifname])
         if ret != 0:
             print outerr
+        ret, _, outerr = start_process(["ip", "link", "delete", ifname])
+        if ret != 0:
+            print outerr
 
     def del_all_ports(self):
-        for port in self.__vswitch_info["ports"]:
+        _, port_str, _ = start_process(["ovs-vsctl", "list-ports", self.name])
+        port_list = port_str.split()
+        for port in port_list:
             self.del_port(port)
 
     def set_interface(self, ifname, peername):
@@ -528,3 +541,49 @@ class Interface(object):
 
     def set_namespace(self, ns):
         self.__namespace = ns
+
+
+class InfrasimPortforward():
+    """
+    helper class for setting port forward.
+    call preinit first, then call forward one by one.
+    """
+
+    def __preinit(self, io_interfaces):
+        if len(io_interfaces) != 2:
+            print "Failed: please check io_interfacse!"
+            return
+        with open("/proc/sys/net/ipv4/ip_forward",'r') as f:
+            flag = f.read()
+            if flag == "0":
+                print("Warning: port forwarding is disabled. ")
+                print("Please check /proc/sys/net/ipv4/ip_forward")
+        subprocess.call(["iptables", "-A", "FORWARD", "-i",
+                         io_interfaces[0], "-o", io_interfaces[1], "-j", "ACCEPT"])
+        subprocess.call(["iptables", "-A", "FORWARD", "-o",
+                         io_interfaces[0], "-i", io_interfaces[1], "-j", "ACCEPT"])
+
+    def __forward(self, src_ip, src_port, dst_port):
+        print "forwarding from {}:{} to host:{}".format(src_ip, src_port, dst_port)
+        subprocess.call(["iptables","-A","PREROUTING","-t","nat","-p","tcp","--dport",dst_port,"-j","DNAT","--to","{}:{}".format(src_ip, src_port)])
+        subprocess.call(["iptables","-t","nat","-A","POSTROUTING","-d",src_ip,"-p","tcp","--dport",src_port,"-j","MASQUERADE"])
+
+    @staticmethod
+    def build(portforward):
+        rules = portforward["rules"]
+        io_interfaces = portforward["io_interfaces"]
+        if rules and io_interfaces:
+            worker = InfrasimPortforward()
+            worker.__preinit(io_interfaces)
+            for rule in rules:
+                arg = rule.split()
+                worker.__forward(arg[0], arg[1], arg[2])
+            # list all rules.
+            # subprocess.call(["iptables","-t","nat","--line-number","-L"])
+
+    @staticmethod
+    def clear():
+        subprocess.call(["iptables", "-P", "FORWARD", "DROP"])
+        subprocess.call(["iptables", "-F", "FORWARD"])
+        subprocess.call(["iptables", "-t", "nat", "-F", "PREROUTING"])
+        subprocess.call(["iptables", "-t", "nat", "-F", "POSTROUTING"])
