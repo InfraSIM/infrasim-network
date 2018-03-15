@@ -184,7 +184,7 @@ class Topology(object):
             ns.link_up_all()
 
         print "[Setup portforward]"
-        InfrasimPortforward.build(self.__topo.get("portforward"))
+        InfrasimPortforward.build(self.__topo.get("portforward", {}))
 
     def delete(self):
         """
@@ -570,8 +570,8 @@ class InfrasimPortforward():
 
     @staticmethod
     def build(portforward):
-        rules = portforward["rules"]
-        io_interfaces = portforward["io_interfaces"]
+        rules = portforward.get("rules")
+        io_interfaces = portforward.get("io_interfaces")
         if rules and io_interfaces:
             worker = InfrasimPortforward()
             worker.__preinit(io_interfaces)
