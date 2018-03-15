@@ -199,7 +199,7 @@ class Topology(object):
             ns.link_up_all()
 
         self.logger_topo.info("[Setup portforward]")
-        InfrasimPortforward.build(self.__topo.get("portforward"), self.logger_topo)
+        InfrasimPortforward.build(self.__topo.get("portforward", {}), self.logger_topo)
 
     def delete(self):
         """
