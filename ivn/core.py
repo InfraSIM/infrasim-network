@@ -1,9 +1,12 @@
 import os
+import sys
 import shutil
 import json
 import re
 import subprocess
 import yaml
+import logging
+import logging.handlers
 from pyroute2 import netlink
 from pyroute2 import IPDB
 from pyroute2 import netns
@@ -47,9 +50,16 @@ class Topology(object):
         self.__openvswitch = {}
         self.__namespace = {}
         self.__connection = {}
+        self.logger_topo = logging.getLogger(__name__)
 
         with open(config_path, "r") as fp:
             self.__topo = yaml.load(fp)
+
+        handler = logging.StreamHandler(sys.stdout)
+        formatter = logging.Formatter("%(asctime)s - %(message)s")
+        handler.setFormatter(formatter)
+        self.logger_topo.addHandler(handler)
+        self.logger_topo.setLevel(logging.DEBUG)
 
     def __load(self):
         """
@@ -62,12 +72,14 @@ class Topology(object):
             ovs_info = self.__topo[ovs_name]
             ovs_info["ifname"] = ovs_name
             self.__openvswitch[ovs_name] = InfrasimvSwitch(ovs_info)
+            self.__openvswitch[ovs_name].set_logger(self.logger_topo)
 
         # load namespaces
         for ns_name in self.__topo["namespace"]:
             ns_info = self.__topo[ns_name]
             ns_info["name"] = ns_name
             self.__namespace[ns_name] = InfrasimNamespace(ns_info)
+            self.__namespace[ns_name].set_logger(self.logger_topo)
 
         # load connections
         # this connection is a mapping from
@@ -75,7 +87,7 @@ class Topology(object):
         self.__connection = self.__topo["connection"]
 
     def __validate(self):
-        print "[Validate topology]"
+        self.logger_topo.info("[Validate topology]")
 
         # validate there are key definitions
         assert "namespace" in self.__topo
@@ -85,12 +97,12 @@ class Topology(object):
         # validate all namespace in index has definition
         for ns in self.__topo["namespace"]:
             assert ns in self.__topo
-        print "All namespaces in index have definition."
+        self.logger_topo.info("All namespaces in index have definition.")
 
         # validate all openvswitch in index has definition
         for ovs in self.__topo["ovs"]:
             assert ovs in self.__topo
-        print "All openvswitch in index have definition."
+        self.logger_topo.info("All openvswitch in index have definition.")
 
         # TODO: validate all namespace definition is correct
 
@@ -121,7 +133,7 @@ class Topology(object):
                 if "bridge_ports" in br:
                     assert br["bridge_ports"] in ns_intf
 
-            print "Namespace {} interfaces and bridges config is legal.".format(ns)
+            self.logger_topo.info("Namespace {} interfaces and bridges config is legal.".format(ns))
 
         # validate no conflict port name
         app_port = []
@@ -132,18 +144,21 @@ class Topology(object):
                 assert port not in app_port
                 app_port.append(port)
 
-            print "Openvswitch {} ports config is legal.".format(ovs)
+            self.logger_topo.info("Openvswitch {} ports config is legal.".format(ovs))
 
         # validate all namespace interfaces are defined in some namespace
         # validate all vswitch ports are defined in some vswitch
         for ns_intf, ovs_port in self.__topo["connection"].items():
             assert ns_intf in app_intf
             assert ovs_port in app_port
-            print "Connection from namespace interface {} "\
-                  "to openvswitch port {} is defined.".\
-                  format(ns_intf, ovs_port)
+            self.logger_topo.info("Connection from namespace interface {} "\
+                                  "to openvswitch port {} is defined.".\
+                                  format(ns_intf, ovs_port))
 
-        print "Topology pass validation."
+        self.logger_topo.info("Topology pass validation.")
+
+    def set_logger(self, obj_logger):
+        self.logger_topo = obj_logger
 
     def create(self):
         """
@@ -152,7 +167,7 @@ class Topology(object):
         """
         self.__load()
 
-        print "[Define openvswitches]"
+        self.logger_topo.info("[Define openvswitches]")
         for _, ovs in self.__openvswitch.items():
             ovs.add_vswitch()
             ovs.add_all_ports()
@@ -161,23 +176,23 @@ class Topology(object):
             # self.__vswitch_int.set_interface("int-br-ex", "phy-br-ex")
             ovs.add_interface_d()
 
-        print "[Define namespaces]"
+        self.logger_topo.info("[Define namespaces]")
         for _, ns in self.__namespace.items():
             ns.create_namespace()
             ns.create_all_interfaces(ref=self.__connection)
 
-        print "[Set openvswitch ports up]"
+        self.logger_topo.info("[Set openvswitch ports up]")
         for _, ovs in self.__openvswitch.items():
             idx = IP_ROUTE.link_lookup(ifname=ovs.name)[0]
             IP_ROUTE.link("set", index=idx, state="up")
-            print "set openvswitch {} up.".format(ovs.name)
+            self.logger_topo.info("set openvswitch {} up.".format(ovs.name))
 
         for _, ovs_port in self.__connection.items():
             idx = IP_ROUTE.link_lookup(ifname=ovs_port)[0]
             IP_ROUTE.link("set", index=idx, state="up")
-            print "set port {} up.".format(ovs_port)
+            self.logger_topo.info("set port {} up.".format(ovs_port))
 
-        print "[Set namespace interfaces up]"
+        self.logger_topo.info("[Set namespace interfaces up]")
         for _, ns in self.__namespace.items():
             ns.create_interface_d()
             ns.link_up_all()
@@ -203,6 +218,12 @@ class Topology(object):
     def get_topo(self):
         return self.__topo
 
+    def get_namespace(self):
+        return self.__namespace
+
+    def get_openvswitch(self):
+        return self.__openvswitch
+
     def __str__(self):
         return json.dumps(self.__topo, indent=4)
 
@@ -217,28 +238,34 @@ class InfrasimNamespace(object):
         self.ip = IPRoute()
         self.__interfaces = {}
         self.__bridges = {}
+        self.logger_topo = None
 
     @staticmethod
     def get_namespaces_list():
         return netns.listnetns()
 
+    def set_logger(self, obj_logger):
+        self.logger_topo = obj_logger
+
     def create_namespace(self):
         if self.name in self.get_namespaces_list():
-            print "namespace {} exists.".format(self.name)
+            self.logger_topo.warning("namespace {} exists.".format(self.name))
             return
         netns.create(self.name)
-        print "namespace {} is created.".format(self.name)
+        self.logger_topo.info("namespace {} is created.".format(self.name))
 
     def create_all_interfaces(self, ref):
         for intf in self.__ns_info["interfaces"]:
             ifname = intf["ifname"]
             self.__interfaces[ifname] = Interface(intf)
+            self.__interfaces[ifname].set_logger(self.logger_topo)
             self.__interfaces[ifname].set_peer(ref.get(ifname, None))
             self.__interfaces[ifname].set_namespace(self.name)
             self.__interfaces[ifname].create_interface()
         for br in self.__ns_info["bridges"]:
             brname = br["ifname"]
             self.__bridges[brname] = Interface(br)
+            self.__bridges[brname].set_logger(self.logger_topo)
             self.__bridges[brname].set_namespace(self.name)
             self.__bridges[brname].create_bridge()
 
@@ -276,8 +303,8 @@ class InfrasimNamespace(object):
         with open(os.path.join(ns_network_dir, "interfaces"), "w") as f:
             f.write(content)
 
-        print "namespace {} interfaces are defined in {}.".\
-              format(self.name, ns_network_dir)
+        self.logger_topo.info("namespace {} interfaces are defined in {}.".\
+                              format(self.name, ns_network_dir))
 
     def del_namespace(self):
         if self.name in netns.listnetns():
@@ -307,7 +334,7 @@ class InfrasimNamespace(object):
         for _, bobj in self.__bridges.items():
             bobj.up()
 
-        print "interfaces in namespace {} are restarted.".format(self.name)
+        self.logger_topo.info("interfaces in namespace {} are restarted.".format(self.name))
 
 
 class InfrasimvSwitch(object):
@@ -320,10 +347,14 @@ class InfrasimvSwitch(object):
         self.__vswitch_info = vswitch_info
         self.name = vswitch_info["ifname"]
         self.oif = None
+        self.logger_topo = None
 
     @staticmethod
     def get_vswitchs_list():
         return start_process(["ovs-vsctl", "show"])[1]
+
+    def set_logger(self, obj_logger):
+        self.logger_topo = obj_logger
 
     def check_vswitch_exists(self):
         ret = start_process(["ovs-vsctl", "br-exists", self.name])[0]
@@ -331,16 +362,16 @@ class InfrasimvSwitch(object):
 
     def add_vswitch(self):
         if self.check_vswitch_exists():
-            print "vswitch {} already exists so not add it.".format(self.name)
+            self.logger_topo.warning("vswitch {} already exists so not add it.".format(self.name))
             return
 
         if start_process(["ovs-vsctl", "add-br", self.name])[0] != 0:
             raise Exception("fail to create vswitch {}.".format(self.name))
-        print "vswitch {} is created.".format(self.name)
+        self.logger_topo.info("vswitch {} is created.".format(self.name))
 
     def del_vswitch(self):
         if not self.check_vswitch_exists():
-            print "vswitch {} doesn't exist so not delete it".format(self.name)
+            self.logger_topo.warning("vswitch {} doesn't exist so not delete it".format(self.name))
         else:
             if start_process(["ovs-vsctl", "del-br", self.name])[0]:
                 raise Exception("fail to delete vswitch {}".format(self.name))
@@ -348,7 +379,7 @@ class InfrasimvSwitch(object):
                 os.remove("/etc/network/interfaces.d/{}".format(self.name))
             except OSError:
                 pass
-            print "vswitch {} is destroyed.".format(self.name)
+            self.logger_topo.info("vswitch {} is destroyed.".format(self.name))
 
     def add_port(self, ifname):
         if not self.check_vswitch_exists():
@@ -356,17 +387,17 @@ class InfrasimvSwitch(object):
 
         ret, _, outerr = start_process(["ovs-vsctl", "add-port", self.name, ifname])
         if ret != 0:
-            print outerr
+            self.logger_topo.error(outerr)
 
     def add_all_ports(self):
         for port in self.__vswitch_info["ports"]:
             self.add_port(port)
-            print "port {} is added to {}.".format(port, self.name)
+            self.logger_topo.info("port {} is added to {}.".format(port, self.name))
 
     def del_port(self, ifname):
         ret, _, outerr = start_process(["ovs-vsctl", "del-port", self.name, ifname])
         if ret != 0:
-            print outerr
+            self.logger_topo.error(outerr)
 
     def del_all_ports(self):
         for port in self.__vswitch_info["ports"]:
@@ -405,7 +436,7 @@ class InfrasimvSwitch(object):
         if returncode != 0:
             raise Exception("Failed to if up {}\nError: {}".format(self.name, err))
 
-        print "Openvswitch {} is defined in /etc/network/interfaces.d and restarted.".format(self.name)
+        self.logger_topo.info("Openvswitch {} is defined in /etc/network/interfaces.d and restarted.".format(self.name))
 
 
 class Interface(object):
@@ -417,16 +448,20 @@ class Interface(object):
         self.__intf_info = interface_info
         self.__peer = None
         self.__namespace = None
+        self.logger_topo = None
+
+    def set_logger(self, obj_logger):
+        self.logger_topo = obj_logger
 
     def create_interface(self):
         ifname = self.__intf_info["ifname"]
         if len(IP_ROUTE.link_lookup(ifname=ifname)) > 0:
-            print "ip link {} exists so not create it.".format(ifname)
+            self.logger_topo.warning("ip link {} exists so not create it.".format(ifname))
             return
 
         if self.__peer:
             if len(IP_ROUTE.link_lookup(ifname=self.__peer)) > 0:
-                print "ip link {} exists so not create it.".format(ifname)
+                self.logger_topo.warning("ip link {} exists so not create it.".format(ifname))
                 return
         else:
             ps_intf = r"^\d+: (?P<intf>[\w-]+): "
@@ -434,8 +469,8 @@ class Interface(object):
             _, out, _ = exec_cmd_in_namespace(self.__namespace, ["ip", "link"])
             m_intf = p_intf.findall(out)
             if ifname in m_intf:
-                print "ip link {} exists in namespace {} so not create it.".\
-                        format(ifname, self.__namespace)
+                self.logger_topo.warning("ip link {} exists in namespace {} so not create it.".\
+                        format(ifname, self.__namespace))
                 return
 
         MAIN_IPDB.create(ifname=ifname,
@@ -450,8 +485,8 @@ class Interface(object):
                 else:
                     raise e
 
-        print "interface {} in namespace {} is created, peer: {}.".\
-              format(ifname, self.__namespace, self.__peer)
+        self.logger_topo.info("interface {} in namespace {} is created, peer: {}.".\
+              format(ifname, self.__namespace, self.__peer))
 
     def create_bridge(self):
         br_name = self.__intf_info["ifname"]
@@ -465,11 +500,12 @@ class Interface(object):
             exec_cmd_in_namespace(self.__namespace, ["brctl", "addif", "{}".format(br_name), intf])
             exec_cmd_in_namespace(self.__namespace, ["ifconfig", intf, "promisc"])
 
-        print "bridge {} in namespace {} is created".format(br_name, self.__namespace),
+        postfix = ""
         if intf:
-            print "on interface {}.".format(intf)
+            postfix = " on interface {}.".format(intf)
         else:
-            print "."
+            postfix = "."
+        self.logger_topo.info("bridge {} in namespace {} is created{}".format(br_name, self.__namespace, postfix))
 
     def down(self):
         exec_cmd_in_namespace(self.__namespace, ["ifdown", self.__intf_info["ifname"]])
