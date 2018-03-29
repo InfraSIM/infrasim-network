@@ -207,6 +207,7 @@ class Topology(object):
         resolved topology
         """
         self.__load()
+
         InfrasimPortforward.clear(self.logger_topo)
 
         for _, ovs in self.__openvswitch.items():
@@ -601,6 +602,7 @@ class InfrasimPortforward():
             if flag == "0":
                 self.logger_topo.info("Warning: port forwarding is disabled. ")
                 self.logger_topo.info("Please check /proc/sys/net/ipv4/ip_forward")
+
         subprocess.call(["iptables", "-A", "FORWARD", "-i",
                          io_interfaces[0], "-o", io_interfaces[1], "-j", "ACCEPT"])
         subprocess.call(["iptables", "-A", "FORWARD", "-o",
