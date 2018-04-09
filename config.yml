@@ -127,3 +127,12 @@ br-ex:
     type: static
     address: 0.0.0.0
     netmask: 255.255.255.0
+
+portforward:
+    io_interfaces:
+        - ens160
+        - br-int
+    rules:
+        - 192.168.88.91 5901 15901
+        - 192.168.88.92 5901 25901
+        - 192.168.88.93 5901 35901
