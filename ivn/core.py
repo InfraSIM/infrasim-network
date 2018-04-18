@@ -278,8 +278,12 @@ class InfrasimNamespace(object):
             new_id = 1
             while new_id in ids:
                 new_id += 1
-            self.logger_topo.info("Setting Id {} for namespace {}.".format(new_id, self.name))
-            subprocess.call(["ip", "netns", "set", self.name, "{}".format(new_id)])
+            try:
+                self.logger_topo.info("Setting Id {} for namespace {}.".format(new_id, self.name))
+                subprocess.check_output(["ip", "netns", "set", self.name, "{}".format(new_id)])
+            except subprocess.CalledProcessError as e:
+                print e
+                break
             time.sleep(1)
 
     def create_all_interfaces(self, ref):
