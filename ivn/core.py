@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import yaml
+import time
 import logging
 import logging.handlers
 from pyroute2 import netlink
@@ -263,6 +264,23 @@ class InfrasimNamespace(object):
         # "netns.create(self.name)" changes present namespace to self.name, which is unexpect.
         subprocess.call(["ip", "netns", "add", self.name])
         self.logger_topo.info("namespace {} is created.".format(self.name))
+        while True:
+            result = subprocess.check_output(["ip", "netns", "list"])
+            if re.search("{} \(id: ".format(self.name), result):
+                self.logger_topo.info("Validation of creating namespace {} passed.".format(self.name))
+                break
+
+            ids = []
+            for item in result.split("\n"):
+                m = re.match("\w+ \(id: (\d+)", item)
+                if m:
+                    ids.append(int(m.group(1)))
+            new_id = 1
+            while new_id in ids:
+                new_id += 1
+            self.logger_topo.info("Setting Id {} for namespace {}.".format(new_id, self.name))
+            subprocess.call(["ip", "netns", "set", self.name, "{}".format(new_id)])
+            time.sleep(1)
 
     def create_all_interfaces(self, ref):
         for intf in self.__ns_info["interfaces"]:
