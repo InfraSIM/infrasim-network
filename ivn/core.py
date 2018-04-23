@@ -153,8 +153,8 @@ class Topology(object):
         for ns_intf, ovs_port in self.__topo["connection"].items():
             assert ns_intf in app_intf
             assert ovs_port in app_port
-            self.logger_topo.info("Connection from namespace interface {} "\
-                                  "to openvswitch port {} is defined.".\
+            self.logger_topo.info("Connection from namespace interface {} "
+                                  "to openvswitch port {} is defined.".
                                   format(ns_intf, ovs_port))
 
         self.logger_topo.info("Topology pass validation.")
@@ -335,7 +335,7 @@ class InfrasimNamespace(object):
         with open(os.path.join(ns_network_dir, "interfaces"), "w") as f:
             f.write(content)
 
-        self.logger_topo.info("namespace {} interfaces are defined in {}.".\
+        self.logger_topo.info("namespace {} interfaces are defined in {}.".
                               format(self.name, ns_network_dir))
 
     def del_namespace(self):
@@ -509,8 +509,8 @@ class Interface(object):
             _, out, _ = exec_cmd_in_namespace(self.__namespace, ["ip", "link"])
             m_intf = p_intf.findall(out)
             if ifname in m_intf:
-                self.logger_topo.warning("ip link {} exists in namespace {} so not create it.".\
-                        format(ifname, self.__namespace))
+                self.logger_topo.warning("ip link {} exists in namespace {} so not create it.".
+                                         format(ifname, self.__namespace))
                 return
 
         MAIN_IPDB.create(ifname=ifname,
@@ -519,14 +519,14 @@ class Interface(object):
         with MAIN_IPDB.interfaces[ifname] as veth:
             try:
                 veth.net_ns_fd = self.__namespace
-            except netlink.exceptions.NetlinkError, e:
+            except netlink.exceptions.NetlinkError as e:
                 if e.code == 17:  # "File exists"
                     pass
                 else:
                     raise e
 
-        self.logger_topo.info("interface {} in namespace {} is created, peer: {}.".\
-              format(ifname, self.__namespace, self.__peer))
+        self.logger_topo.info("interface {} in namespace {} is created, peer: {}.".
+                              format(ifname, self.__namespace, self.__peer))
 
     def create_bridge(self):
         br_name = self.__intf_info["ifname"]
@@ -632,8 +632,10 @@ class InfrasimPortforward():
 
     def __forward(self, src_ip, src_port, dst_port):
         self.logger_topo.info("forwarding from {}:{} to host:{}".format(src_ip, src_port, dst_port))
-        subprocess.call(["iptables", "-A", "PREROUTING", "-t", "nat", "-p", "tcp", "--dport", dst_port, "-j", "DNAT", "--to", "{}:{}".format(src_ip, src_port)])
-        subprocess.call(["iptables", "-t", "nat", "-A", "POSTROUTING", "-d", src_ip, "-p", "tcp", "--dport", src_port, "-j", "MASQUERADE"])
+        subprocess.call(["iptables", "-A", "PREROUTING", "-t", "nat", "-p", "tcp", "--dport",
+                         dst_port, "-j", "DNAT", "--to", "{}:{}".format(src_ip, src_port)])
+        subprocess.call(["iptables", "-t", "nat", "-A", "POSTROUTING", "-d", src_ip,
+                         "-p", "tcp", "--dport", src_port, "-j", "MASQUERADE"])
 
     @staticmethod
     def build(portforward, logger):
