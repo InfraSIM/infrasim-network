@@ -653,7 +653,7 @@ class InfrasimPortforward():
     @staticmethod
     def clear(logger):
         logger.info("Clear all port forwarding setting.")
-        subprocess.call(["iptables", "-P", "FORWARD", "DROP"])
-        subprocess.call(["iptables", "-F", "FORWARD"])
-        subprocess.call(["iptables", "-t", "nat", "-F", "PREROUTING"])
-        subprocess.call(["iptables", "-t", "nat", "-F", "POSTROUTING"])
+        subprocess.call(["iptables", "-F"])
+        subprocess.call(["iptables", "-X"])
+        subprocess.call(["iptables", "-t", "nat", "-F"])
+        subprocess.call(["iptables", "-t", "nat", "-X"])
