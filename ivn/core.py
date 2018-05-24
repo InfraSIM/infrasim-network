@@ -639,8 +639,8 @@ class InfrasimPortforward():
 
     @staticmethod
     def build(portforward, logger):
-        rules = portforward["rules"]
-        io_interfaces = portforward["io_interfaces"]
+        rules = portforward.get("rules", None)
+        io_interfaces = portforward.get("io_interfaces", None)
         if rules and io_interfaces:
             worker = InfrasimPortforward(logger)
             worker.__preinit(io_interfaces)
