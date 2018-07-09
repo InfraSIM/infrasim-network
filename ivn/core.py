@@ -13,9 +13,6 @@ from pyroute2 import IPDB
 from pyroute2 import netns
 from pyroute2.iproute import IPRoute
 
-IP_ROUTE = IPRoute()
-MAIN_IPDB = IPDB()
-
 
 def start_process(args):
     """
@@ -184,6 +181,7 @@ class Topology(object):
             ns.create_all_interfaces(ref=self.__connection)
 
         self.logger_topo.info("[Set openvswitch ports up]")
+        IP_ROUTE = IPRoute()
         for _, ovs in self.__openvswitch.items():
             idx = IP_ROUTE.link_lookup(ifname=ovs.name)[0]
             IP_ROUTE.link("set", index=idx, state="up")
@@ -201,6 +199,8 @@ class Topology(object):
 
         self.logger_topo.info("[Setup portforward]")
         InfrasimPortforward.build(self.__topo.get("portforward", {}), self.logger_topo)
+
+        IP_ROUTE.close()
 
     def delete(self):
         """
@@ -244,7 +244,6 @@ class InfrasimNamespace(object):
     def __init__(self, ns_info):
         self.__ns_info = ns_info
         self.name = ns_info['name']
-        self.ip = IPRoute()
         self.__interfaces = {}
         self.__bridges = {}
         self.logger_topo = None
@@ -495,15 +494,20 @@ class Interface(object):
 
     def create_interface(self):
         ifname = self.__intf_info["ifname"]
+        IP_ROUTE = IPRoute()
         if len(IP_ROUTE.link_lookup(ifname=ifname)) > 0:
             self.logger_topo.warning("ip link {} exists so not create it.".format(ifname))
+            IP_ROUTE.close()
             return
 
         if self.__peer:
             if len(IP_ROUTE.link_lookup(ifname=self.__peer)) > 0:
                 self.logger_topo.warning("ip link {} exists so not create it.".format(ifname))
+                IP_ROUTE.close()
                 return
         else:
+            # Close IP_ROUTE first anyway
+            IP_ROUTE.close()
             ps_intf = r"^\d+: (?P<intf>[\w-]+): "
             p_intf = re.compile(ps_intf, re.MULTILINE)
             _, out, _ = exec_cmd_in_namespace(self.__namespace, ["ip", "link"])
@@ -513,6 +517,7 @@ class Interface(object):
                                          format(ifname, self.__namespace))
                 return
 
+        MAIN_IPDB = IPDB()
         MAIN_IPDB.create(ifname=ifname,
                          kind="veth" if self.__peer else "dummy",
                          peer=self.__peer).commit()
@@ -520,11 +525,13 @@ class Interface(object):
             try:
                 veth.net_ns_fd = self.__namespace
             except netlink.exceptions.NetlinkError as e:
+                MAIN_IPDB.release()
                 if e.code == 17:  # "File exists"
                     pass
                 else:
                     raise e
 
+        MAIN_IPDB.release()
         self.logger_topo.info("interface {} in namespace {} is created, peer: {}.".
                               format(ifname, self.__namespace, self.__peer))
 
