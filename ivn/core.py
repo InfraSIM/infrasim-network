@@ -196,6 +196,7 @@ class Topology(object):
         for _, ns in self.__namespace.items():
             ns.create_interface_d()
             ns.link_up_all()
+            ns.create_routes()
 
         self.logger_topo.info("[Setup portforward]")
         InfrasimPortforward.build(self.__topo.get("portforward", {}), self.logger_topo)
@@ -336,6 +337,15 @@ class InfrasimNamespace(object):
 
         self.logger_topo.info("namespace {} interfaces are defined in {}.".
                               format(self.name, ns_network_dir))
+
+    def create_routes(self):
+        for route in self.__ns_info.get("routes", []):
+            destination = route.get("dst", "default")
+            gateway = route["gw"]
+            dev = route["dev"]
+            ret, _, outerr = exec_cmd_in_namespace(self.name, ["ip", "route", "add", destination, "via", gateway, "dev", dev])
+            if ret != 0:
+                self.logger_topo.error(outerr)
 
     def del_namespace(self):
         if self.name in netns.listnetns():
