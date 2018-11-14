@@ -50,6 +50,11 @@ node1ns:
         type: static
         address: 169.254.0.1
         netmask: 255.255.255.0
+    routes:
+    -
+        dst: default
+        gw: 192.168.88.1
+        dev: br0
 
 node2ns:
     interfaces:
@@ -76,6 +81,11 @@ node2ns:
         type: static
         address: 169.254.0.2
         netmask: 255.255.255.0
+    routes:
+    -
+        dst: default
+        gw: 192.168.88.1
+        dev: br0
 node3ns:
     interfaces:
     -
@@ -101,6 +111,11 @@ node3ns:
         type: static
         address: 169.254.0.3
         netmask: 255.255.255.0
+    routes:
+    -
+        dst: default
+        gw: 192.168.88.1
+        dev: br0
 
 br-int:
     ports:
