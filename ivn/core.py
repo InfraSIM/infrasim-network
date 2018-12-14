@@ -484,6 +484,17 @@ class InfrasimvSwitch(object):
         if returncode != 0:
             raise Exception("Failed to if up {}\nError: {}".format(self.name, err))
 
+        if self.__vswitch_info["type"] == "static" and self.__vswitch_info.get("postrouting"):
+            mask_bits = sum([bin(int(x)).count("1") for x in self.__vswitch_info["netmask"].split(".")])
+            address = "{0}/{1}".format(self.__vswitch_info["address"], mask_bits)
+            returncode, _, err = start_process(["iptables", "-t", "nat", "-A", "POSTROUTING", "-s",
+                address, "-o", self.__vswitch_info["postrouting"], "-j", "MASQUERADE"])
+            if returncode != 0:
+                self.logger_topo.warning(err)
+            else:
+                self.logger_topo.info("packets from {} are forwarded to interface {}".format(
+                    address, self.__vswitch_info["postrouting"]))
+
         self.logger_topo.info("Openvswitch {} is defined in /etc/network/interfaces.d and restarted.".format(self.name))
 
 
