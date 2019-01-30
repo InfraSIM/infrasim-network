@@ -4,10 +4,10 @@ import shutil
 import json
 import re
 import subprocess
-import yaml
 import time
 import logging
 import logging.handlers
+import yaml
 from pyroute2 import netlink
 from pyroute2 import IPDB
 from pyroute2 import netns
@@ -423,18 +423,31 @@ class InfrasimvSwitch(object):
                 pass
             self.logger_topo.info("vswitch {} is destroyed.".format(self.name))
 
+    def check_port_exists(self, ifname):
+        ret, out, outerr = start_process(["ovs-vsctl", "list-ports", self.name])
+        if ret == 0:
+            return ifname in out
+        else:
+            self.logger_topo.error(outerr)
+            return False
+
     def add_port(self, ifname):
         if not self.check_vswitch_exists():
             raise Exception("vswitch {} doesn't exist, please add it first.".format(self.name))
+        if self.check_port_exists(ifname):
+            self.logger_topo.warning(
+                "port {} already exists in vswitch {} so not add it".format(ifname, self.name))
+            return
 
         ret, _, outerr = start_process(["ovs-vsctl", "add-port", self.name, ifname])
         if ret != 0:
             self.logger_topo.error(outerr)
+        else:
+            self.logger_topo.info("port {} is added to {}.".format(ifname, self.name))
 
     def add_all_ports(self):
         for port in self.__vswitch_info["ports"]:
             self.add_port(port)
-            self.logger_topo.info("port {} is added to {}.".format(port, self.name))
 
     def del_port(self, ifname):
         ret, _, outerr = start_process(["ovs-vsctl", "del-port", self.name, ifname])
@@ -448,6 +461,9 @@ class InfrasimvSwitch(object):
     def del_all_ports(self):
         _, port_str, _ = start_process(["ovs-vsctl", "list-ports", self.name])
         port_list = port_str.split()
+        _, vir_port, _ = start_process(["ls", "/sys/devices/virtual/net"])
+        vir_port_list = vir_port.split()
+        port_list = set(vir_port_list).intersection(port_list)
         for port in port_list:
             self.del_port(port)
 
@@ -488,7 +504,8 @@ class InfrasimvSwitch(object):
             mask_bits = sum([bin(int(x)).count("1") for x in self.__vswitch_info["netmask"].split(".")])
             address = "{0}/{1}".format(self.__vswitch_info["address"], mask_bits)
             returncode, _, err = start_process(["iptables", "-t", "nat", "-A", "POSTROUTING", "-s",
-                address, "-o", self.__vswitch_info["postrouting"], "-j", "MASQUERADE"])
+                                                address, "-o", self.__vswitch_info["postrouting"],
+                                                "-j", "MASQUERADE"])
             if returncode != 0:
                 self.logger_topo.warning(err)
             else:
