@@ -52,7 +52,7 @@ class Topology(object):
         self.logger_topo = logging.getLogger(__name__)
 
         with open(config_path, "r") as fp:
-            self.__topo = yaml.load(fp)
+            self.__topo = yaml.load(fp, Loader=yaml.FullLoader)
 
         handler = logging.StreamHandler(sys.stdout)
         formatter = logging.Formatter("%(asctime)s - %(message)s")
@@ -221,7 +221,7 @@ class Topology(object):
 
     def set_config(self, config_path):
         with open(config_path, "r") as fp:
-            self.__topo = yaml.load(fp)
+            self.__topo = yaml.load(fp, Loader=yaml.FullLoader)
 
     def get_topo(self):
         return self.__topo
