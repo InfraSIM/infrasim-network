@@ -8,6 +8,7 @@ import time
 import logging
 import logging.handlers
 import yaml
+import netifaces
 from pyroute2 import netlink
 from pyroute2 import IPDB
 from pyroute2 import netns
@@ -49,6 +50,7 @@ class Topology(object):
         self.__openvswitch = {}
         self.__namespace = {}
         self.__connection = {}
+        self.__port_forward = None
         self.logger_topo = logging.getLogger(__name__)
 
         with open(config_path, "r") as fp:
@@ -84,6 +86,8 @@ class Topology(object):
         # this connection is a mapping from
         # namespace interface to vswitch port
         self.__connection = self.__topo["connection"]
+
+        self.__port_forward = InfrasimPortforward(self.__topo.get("portforward"), self.logger_topo)
 
     def __validate(self):
         self.logger_topo.info("[Validate topology]")
@@ -199,7 +203,7 @@ class Topology(object):
             ns.create_routes()
 
         self.logger_topo.info("[Setup portforward]")
-        InfrasimPortforward.build(self.__topo.get("portforward", {}), self.logger_topo)
+        self.__port_forward.build()
 
         IP_ROUTE.close()
 
@@ -210,7 +214,7 @@ class Topology(object):
         """
         self.__load()
 
-        InfrasimPortforward.clear(self.logger_topo)
+        self.__port_forward.clear()
 
         for _, ovs in self.__openvswitch.items():
             ovs.del_vswitch()
@@ -415,6 +419,10 @@ class InfrasimvSwitch(object):
             self.logger_topo.warning("vswitch {} doesn't exist so not delete it".format(self.name))
         else:
             self.del_all_ports()
+            _, port_str, _ = start_process(["ovs-vsctl", "list-ports", self.name])
+            if port_str and port_str.split(" \n"):
+                self.logger_topo.info("vswitch {} still has port, so not delete it".format(self.name))
+                return
             if start_process(["ovs-vsctl", "del-br", self.name])[0]:
                 raise Exception("fail to delete vswitch {}".format(self.name))
             try:
@@ -459,8 +467,7 @@ class InfrasimvSwitch(object):
             self.logger_topo.error(outerr)
 
     def del_all_ports(self):
-        _, port_str, _ = start_process(["ovs-vsctl", "list-ports", self.name])
-        port_list = port_str.split()
+        port_list = self.__vswitch_info["ports"]
         _, vir_port, _ = start_process(["ls", "/sys/devices/virtual/net"])
         vir_port_list = vir_port.split()
         port_list = set(vir_port_list).intersection(port_list)
@@ -499,18 +506,6 @@ class InfrasimvSwitch(object):
         returncode, _, err = start_process(["ifup", self.name])
         if returncode != 0:
             raise Exception("Failed to if up {}\nError: {}".format(self.name, err))
-
-        if self.__vswitch_info["type"] == "static" and self.__vswitch_info.get("postrouting"):
-            mask_bits = sum([bin(int(x)).count("1") for x in self.__vswitch_info["netmask"].split(".")])
-            address = "{0}/{1}".format(self.__vswitch_info["address"], mask_bits)
-            returncode, _, err = start_process(["iptables", "-t", "nat", "-A", "POSTROUTING", "-s",
-                                                address, "-o", self.__vswitch_info["postrouting"],
-                                                "-j", "MASQUERADE"])
-            if returncode != 0:
-                self.logger_topo.warning(err)
-            else:
-                self.logger_topo.info("packets from {} are forwarded to interface {}".format(
-                    address, self.__vswitch_info["postrouting"]))
 
         self.logger_topo.info("Openvswitch {} is defined in /etc/network/interfaces.d and restarted.".format(self.name))
 
@@ -657,7 +652,11 @@ class InfrasimPortforward():
     call preinit first, then call forward one by one.
     """
 
-    def __init__(self, obj_logger):
+    def __init__(self, port_forward, obj_logger):
+        self.__rules = port_forward.get("rules", [])
+        self.__io_interfaces = port_forward.get("io_interfaces", [])
+        self.__postrouting = port_forward.get("postrouting", None)
+        self.__iptables_rules = []
         self.logger_topo = obj_logger
 
     def __preinit(self, io_interfaces):
@@ -670,35 +669,42 @@ class InfrasimPortforward():
                 self.logger_topo.info("Warning: port forwarding is disabled. ")
                 self.logger_topo.info("Please check /proc/sys/net/ipv4/ip_forward")
 
-        subprocess.call(["iptables", "-A", "FORWARD", "-i",
-                         io_interfaces[0], "-o", io_interfaces[1], "-j", "ACCEPT"])
-        subprocess.call(["iptables", "-A", "FORWARD", "-o",
-                         io_interfaces[0], "-i", io_interfaces[1], "-j", "ACCEPT"])
-
-    def __forward(self, src_ip, src_port, dst_port):
-        self.logger_topo.info("forwarding from {}:{} to host:{}".format(src_ip, src_port, dst_port))
-        subprocess.call(["iptables", "-A", "PREROUTING", "-t", "nat", "-p", "tcp", "--dport",
-                         dst_port, "-j", "DNAT", "--to", "{}:{}".format(src_ip, src_port)])
-        subprocess.call(["iptables", "-t", "nat", "-A", "POSTROUTING", "-d", src_ip,
-                         "-p", "tcp", "--dport", src_port, "-j", "MASQUERADE"])
-
-    @staticmethod
-    def build(portforward, logger):
-        rules = portforward.get("rules", None)
-        io_interfaces = portforward.get("io_interfaces", None)
-        if rules and io_interfaces:
-            worker = InfrasimPortforward(logger)
-            worker.__preinit(io_interfaces)
-            for rule in rules:
+    def __build_rules(self):
+        if self.__rules:
+            for rule in self.__rules:
                 arg = rule.split()
-                worker.__forward(arg[0], arg[1], arg[2])
-            # list all rules.
-            # subprocess.call(["iptables","-t","nat","--line-number","-L"])
+                self.__iptables_rules.append(["PREROUTING", "-t", "nat", "-p", "tcp", "--dport", arg[2],
+                                   "-j", "DNAT", "--to", "{}:{}".format(arg[0], arg[1])])
+                self.__iptables_rules.append(["POSTROUTING", "-t", "nat", "-d", arg[0],
+                                    "-p", "tcp", "--dport", arg[1], "-j", "MASQUERADE"])
+        if self.__io_interfaces:
+            self.__iptables_rules.append(["FORWARD", "-i", self.__io_interfaces[0], "-o", self.__io_interfaces[1], "-j", "ACCEPT"])
+            self.__iptables_rules.append(["FORWARD", "-i", self.__io_interfaces[1], "-o", self.__io_interfaces[0], "-j", "ACCEPT"])
+            internal_ip = netifaces.ifaddresses(self.__io_interfaces[1])[netifaces.AF_INET][0]['addr']
+            self.__iptables_rules.append(["POSTROUTING", "-t", "nat", "-s", internal_ip + "/24",
+                                        "-o", self.__io_interfaces[0], "-j", "MASQUERADE"])
 
-    @staticmethod
-    def clear(logger):
-        logger.info("Clear all port forwarding setting.")
-        subprocess.call(["iptables", "-F"])
-        subprocess.call(["iptables", "-X"])
-        subprocess.call(["iptables", "-t", "nat", "-F"])
-        subprocess.call(["iptables", "-t", "nat", "-X"])
+    def __add_rule(self, rule):
+        header = ["iptables", "-A"]
+        subprocess.call(header + rule)
+
+    def __remove_rule(self, rule):
+        header = ["iptables", "-D"]
+        subprocess.call(header +rule)
+
+    def __check_rule(self, rule):
+        header = ["iptables", "-C"]
+        return start_process(header + rule)[0] == 0
+
+    def build(self):
+        self.__build_rules()
+        self.logger_topo.info("add rule for host iptables")
+        for rule in self.__iptables_rules:
+            self.__add_rule(rule)
+
+    def clear(self):
+        self.__build_rules()
+        self.logger_topo.info("delete rule for host iptables")
+        for rule in self.__iptables_rules:
+            if self.__check_rule(rule):
+                self.__remove_rule(rule)
