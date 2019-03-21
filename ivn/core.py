@@ -678,6 +678,8 @@ class InfrasimPortforward():
                 self.__iptables_rules.append(["POSTROUTING", "-t", "nat", "-d", arg[0],
                                     "-p", "tcp", "--dport", arg[1], "-j", "MASQUERADE"])
         if self.__io_interfaces:
+            if self.__io_interfaces != [ x for x in self.__io_interfaces if x in netifaces.interfaces()]:
+                return
             self.__iptables_rules.append(["FORWARD", "-i", self.__io_interfaces[0], "-o", self.__io_interfaces[1], "-j", "ACCEPT"])
             self.__iptables_rules.append(["FORWARD", "-i", self.__io_interfaces[1], "-o", self.__io_interfaces[0], "-j", "ACCEPT"])
             internal_ip = netifaces.ifaddresses(self.__io_interfaces[1])[netifaces.AF_INET][0]['addr']
