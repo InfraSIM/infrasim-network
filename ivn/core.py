@@ -434,7 +434,7 @@ class InfrasimvSwitch(object):
     def check_port_exists(self, ifname):
         ret, out, outerr = start_process(["ovs-vsctl", "list-ports", self.name])
         if ret == 0:
-            return ifname in out
+            return ifname in out.split("\n")
         else:
             self.logger_topo.error(outerr)
             return False
